@@ -9,6 +9,17 @@
 模型是 Qwen3.8-27B 的权重全部三元化（−1 / 0 / +1）后的产物：**只有 5.95 GB**，
 保留原模型 **98.2%** 的能力 —— 一张 8GB 显卡就能跑，实测生成速度 **51 t/s**。
 
+
+## 一眼看全（At a glance）
+
+- **模型**：Ternary Bonsai 2 27B —— Qwen3.8-27B 的每个权重三元量化（−1 / 0 / +1）
+- **体积**：**5.95 GB** —— 一张 8 GB 显卡就能装下
+- **速度**：4K 上下文 **51 tok/s**，100K 上下文 **39 tok/s**（RTX 3070 实测）
+- **质量**：保留 FP16 原模型的 **98.2%**
+- **部署方式**：**给 AI 助手一句话**（Claude Code / Cursor / Codex 均可）
+- **上下文上限**：全 GPU **100K**；用 `-nkvo` 可达 **262K**
+- **技术栈**：PrismML llama.cpp fork + CUDA 12.8 + Anthropic 桥接
+
 ---
 
 ## 怎么用（一句话）
@@ -327,6 +338,38 @@ llama-server 原生支持 Anthropic API，但 Claude Code 会把 `role: system` 
 | 全 GPU（默认） | 100K | ~39 t/s |
 | `-nkvo` | 262K | ~11 t/s |
 | 预填充（pp512） | — | 888 t/s |
+
+---
+
+
+## 常见问题（FAQ）
+
+**Q: 8 GB 显卡能跑 Bonsai-2-27B 吗？**
+A: 能。PTQ1_0 格式 5.95 GB，在 RTX 3070 8 GB 上实测 **51 tok/s**，上下文上限 **102400**。
+
+**Q: 为什么 llama.cpp 加载不了 "T3 slim" 的 `.q27` 文件？**
+A: 那是 **q27 引擎**的私有格式。llama.cpp 侧的对应物是 **PTQ1_0**。
+
+**Q: 上下文能开多长？**
+A: 全 GPU 卸载时 8 GB 卡上限 **100K**（102400）。用 `-nkvo` 把 KV 放内存可到 **262K**，
+速度约 11 tok/s（128K 与 262K 速度相同，瓶颈在 PCIe）。
+
+**Q: 能接入 Claude Code 吗？**
+A: 可以，但**需要一个桥接代理** —— Claude Code 会把 `role: system` 塞进 `messages` 数组，
+而 Bonsai 的 Qwen 系模板要求 system 置顶，直连会报 `System message must be at the beginning`。
+
+**Q: 为什么只输出思考、不给答案？**
+A: 这是推理模型，**思考会消耗输出预算**。把 `-n` 提到 16384 以上，或加 `--reasoning-effort medium`。
+先怀疑额度，再怀疑模型。
+
+**Q: 必须用 PrismML 的 fork 吗？**
+A: 是。三元权重需要**自定义 CUDA 内核**，官方 llama.cpp 会拒绝加载 PTQ1_0，
+或静默加载 Q2_0 产出乱码。而且官方预编译二进制只含 `sm_120a`（RTX 50 系），
+20/30/40 系必须源码编译。
+
+**Q: 生成的答案有时是错的（比如自检用了循环论证）？**
+A: 已知弱点。它在多轮工具循环中缺乏止损、偶尔用"重加密比对"这类恒真检查自证。
+关键结论需人工复核。详见 README 的「已知弱点」一节。
 
 ---
 

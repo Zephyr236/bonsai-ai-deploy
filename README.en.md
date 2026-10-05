@@ -8,6 +8,17 @@
 
 The model is Qwen3.8-27B with every weight ternary-quantized (−1 / 0 / +1): **only 5.95 GB**, retaining **98.2%** of the original model's capability. It fits on an 8 GB card at a measured **51 tok/s**.
 
+
+## At a glance
+
+- **Model**: Ternary Bonsai 2 27B — Qwen3.8-27B with every weight ternary-quantized (−1 / 0 / +1)
+- **Size**: **5.95 GB** — fits on a single 8 GB GPU
+- **Speed**: **51 tok/s** at 4K context, **39 tok/s** at 100K (measured on an RTX 3070)
+- **Quality**: retains **98.2%** of the FP16 original
+- **Deploy**: **one prompt to your AI agent** (Claude Code / Cursor / Codex)
+- **Context ceiling**: **100K** full-GPU; **262K** with `-nkvo`
+- **Stack**: PrismML llama.cpp fork + CUDA 12.8 + Anthropic bridge
+
 ---
 
 ## Usage (one sentence)
@@ -329,6 +340,41 @@ server side `-c 102400 --parallel 1`.
 | Full GPU (default) | 100K | ~39 tok/s |
 | `-nkvo` | 262K | ~11 tok/s |
 | Prefill (pp512) | — | 888 tok/s |
+
+---
+
+
+## FAQ
+
+**Q: Can I run Bonsai-2-27B on an 8 GB GPU?**
+A: Yes. PTQ1_0 is 5.95 GB; on an RTX 3070 8 GB it runs at **51 tok/s** with a
+**102400**-token context ceiling.
+
+**Q: Why can't llama.cpp load the "T3 slim" `.q27` file?**
+A: That is the **q27 engine**'s private format. The llama.cpp equivalent is **PTQ1_0**.
+
+**Q: What context length is possible?**
+A: **100K** (102400) with full GPU offload on 8 GB. **262K** using `-nkvo` (KV in system
+RAM) at ~11 tok/s (128K and 262K run at the same speed — the bottleneck is PCIe).
+
+**Q: Does it work with Claude Code?**
+A: Yes, but a **bridge proxy is required** — Claude Code puts `role: system` inside the
+`messages` array, while Bonsai's Qwen-family template rejects that with
+`System message must be at the beginning`.
+
+**Q: Why do I only get thinking, never an answer?**
+A: This is a reasoning model and **thinking consumes the output budget**. Raise `-n` to
+16384+, or add `--reasoning-effort medium`. Suspect the budget before the model.
+
+**Q: Do I have to use the PrismML fork?**
+A: Yes. The ternary weights need **custom CUDA kernels**; upstream llama.cpp either refuses
+PTQ1_0 or silently loads Q2_0 and emits garbage. The official prebuilt binaries also contain
+only `sm_120a` (RTX 50), so RTX 20/30/40 must build from source.
+
+**Q: It sometimes produces wrong results (e.g. a tautological self-check)?**
+A: A known weakness. It lacks stop-loss in multi-turn tool loops and occasionally "verifies"
+itself with tautologically-true checks (such as re-encrypting in a symmetric cipher).
+Review critical conclusions by hand. See the "Known weaknesses" section in the README.
 
 ---
 
