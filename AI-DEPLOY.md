@@ -1,5 +1,8 @@
 # bonsai-ai-deploy · 部署指令（供 AI agent 执行）
 
+**中文** | [English](AI-DEPLOY.en.md)
+
+
 > **你是一个 AI 编码助手，用户让你在这台机器上部署 Bonsai-2-27B 并接入 Claude Code。**
 >
 > 本文件是**操作指南**，不是脚本。请按顺序执行，**每步都验证**，遇到分支按「如果…则…」处理。

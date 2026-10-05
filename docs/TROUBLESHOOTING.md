@@ -1,5 +1,8 @@
 # 故障速查
 
+**中文** | [English](TROUBLESHOOTING.en.md)
+
+
 > 详细版见 [`../AI-DEPLOY.md`](../AI-DEPLOY.md) §9。这里只列最常遇到的。
 
 ## 按症状查

@@ -1,5 +1,7 @@
 # bonsai-ai-deploy
 
+[English](README.en.md) | **中文**
+
 > **用 AI 部署 Bonsai-2-27B** —— 把一根提示词交给 AI，它自己装驱动、编 CUDA、下模型。
 
 **在单张显卡上部署 [Bonsai-2-27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf)（三元量化 27B），并接入 Claude Code。**
