@@ -21,7 +21,7 @@
 或者直接说：
 
 ```
-按 https://github.com/<你的用户名>/bonsai-ai-deploy 里的 AI-DEPLOY.md 部署 Bonsai-2-27B
+按 https://github.com/Zephyr236/bonsai-ai-deploy 里的 AI-DEPLOY.md 部署 Bonsai-2-27B
 ```
 
 > 部署时 AI 会读 [`docs/PARAM-TUNING.md`](docs/PARAM-TUNING.md)，
