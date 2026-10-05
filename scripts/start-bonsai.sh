@@ -10,8 +10,10 @@
 #
 # 环境变量可覆盖：
 #   CTX=131072  上下文（默认 102400）
+#   HOST=0.0.0.0  监听地址（默认 0.0.0.0 = 内网可访问；改 127.0.0.1 则仅本机）
 #   PORT=8080   llama-server 端口
 #   BPORT=8081  桥接代理端口
+#   API_KEY=xxx  可选 API 密钥（内网暴露时强烈建议设置）
 #
 # 所有路径都相对于**本脚本所在目录**，整个文件夹可随意移动/改名。
 # ============================================================
@@ -31,6 +33,15 @@ SETTINGS="$SCRIPT_DIR/claude-settings-bonsai.json"
 CTX=${CTX:-102400}
 PORT=${PORT:-8080}
 BPORT=${BPORT:-8081}
+HOST=${HOST:-0.0.0.0}          # 监听地址；0.0.0.0 = 内网可访问，127.0.0.1 = 仅本机
+API_KEY=${API_KEY:-}           # 可选：设置后调用方必须带 key（强烈建议内网暴露时设置）
+KEYFILE="$BASE_DIR/.bonsai-api-key"   # 记住上次用过的密钥（已 gitignore）
+
+# 没显式传 API_KEY 时，沿用上次的密钥。
+# 否则重启一次就会把已经设过密钥的端口**静默地**重新敞开。
+if [ -z "$API_KEY" ] && [ -f "$KEYFILE" ]; then
+  API_KEY=$(cat "$KEYFILE" 2>/dev/null)
+fi
 
 mkdir -p "$LOG_DIR" "$BASE_DIR/reqdump"
 
@@ -85,23 +96,40 @@ do_status() {
     [ -n "$hp" ] && c_warn "llama-server   :$PORT  已启动但未就绪（模型加载中）" \
                  || c_bad  "llama-server   :$PORT  未运行"
   fi
-  # 桥接
+  # 桥接（设置了密钥时必须带上，否则会返回 401）
   if [ -n "$(pid_on_port "$BPORT")" ]; then
+    local -a AUTH=()
+    [ -n "$API_KEY" ] && AUTH=(-H "x-api-key: $API_KEY")
     local code; code=$(timeout 5 curl -s -o /dev/null -w '%{http_code}' \
-      "http://127.0.0.1:$BPORT/v1/models" 2>/dev/null)
+      ${AUTH[@]+"${AUTH[@]}"} "http://127.0.0.1:$BPORT/v1/models" 2>/dev/null)
     [ "$code" = "200" ] && c_ok "桥接代理       :$BPORT  运行中" \
                         || c_warn "桥接代理       :$BPORT  进程在但返回 HTTP $code"
   else
     c_bad "桥接代理       :$BPORT  未运行"
   fi
   echo "───────────────────────────────"
+  if [ -n "$API_KEY" ]; then
+    c_info "鉴权: 已启用（调用方需带 x-api-key）"
+  else
+    c_warn "鉴权: 未启用 —— 任何能访问 $BPORT 端口的人都能用模型"
+  fi
   c_info "显存: $(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader 2>/dev/null)"
   command -v claude >/dev/null 2>&1 && \
-    c_info "接入命令: claude --settings $SETTINGS"
+    c_info "本机接入: claude --settings $SETTINGS"
+  local lanip; lanip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  [ -n "$lanip" ] && c_info "内网接入: ANTHROPIC_BASE_URL=http://$lanip:$BPORT"
+  # 实际在听的地址（可能和 HOST 变量不一致，比如上次是用别的参数启的）
+  local listen; listen=$(ss -ltn 2>/dev/null | awk -v p=":$BPORT" '$4 ~ p {print $4}' | head -1)
+  [ -n "$listen" ] && c_info "桥接实际监听: $listen"
 }
 
 # ---------- start ----------
 do_start() {
+  # 记住密钥，供下次不带 API_KEY 重启时沿用
+  if [ -n "$API_KEY" ]; then
+    printf '%s' "$API_KEY" > "$KEYFILE" 2>/dev/null && chmod 600 "$KEYFILE" 2>/dev/null
+  fi
+
   # --- 前置检查 ---
   echo "═══ 前置检查 ═══"
   echo "  基准目录: $BASE_DIR"
@@ -122,15 +150,19 @@ do_start() {
   else
     # --- ① 启动 llama-server ---
     echo
-    echo "═══ ① 启动 llama-server (:${PORT}, ctx=${CTX}) ═══"
+    echo "═══ ① 启动 llama-server (:${PORT}, ctx=${CTX}, 监听 ${HOST}) ═══"
     export LD_LIBRARY_PATH="$LLAMA_DIR/build/bin:${LD_LIBRARY_PATH:-}"
-    setsid nohup "$LLAMA_DIR/build/bin/llama-server" \
-      -m "$MODEL" \
-      -ngl 99 -c "$CTX" -fa on -ctk q4_0 -ctv q4_0 \
-      -b 2048 -ub 512 -t 8 \
-      --host 127.0.0.1 --port "$PORT" --parallel 1 \
-      --jinja \
-      --chat-template-kwargs '{"reasoning_effort":"medium"}' \
+    # 用数组拼参数：API_KEY 里即便有空格/特殊字符也不会被拆错
+    local -a SRV_ARGS=(
+      -m "$MODEL"
+      -ngl 99 -c "$CTX" -fa on -ctk q4_0 -ctv q4_0
+      -b 2048 -ub 512 -t 8
+      --host "$HOST" --port "$PORT" --parallel 1
+      --jinja
+      --chat-template-kwargs '{"reasoning_effort":"medium"}'
+    )
+    [ -n "$API_KEY" ] && SRV_ARGS+=(--api-key "$API_KEY")
+    setsid nohup "$LLAMA_DIR/build/bin/llama-server" "${SRV_ARGS[@]}" \
       > "$LOG_DIR/llama-server.log" 2>&1 < /dev/null &
     disown
     c_info "已启动，等待模型加载（首次约 1–2 分钟）..."
@@ -163,8 +195,9 @@ do_start() {
   if [ -n "$(pid_on_port "$BPORT")" ]; then
     c_warn "桥接代理已在 :$BPORT 运行，跳过"
   else
-    # 把基准目录传给桥接（它据此定位 reqdump）
-    setsid nohup "$PY" "$BRIDGE" "$BPORT" "$BASE_DIR" \
+    # 参数：端口、基准目录（用于定位 reqdump）、监听地址、可选 API 密钥
+    # 代理是唯一鉴权边界：校验客户端密钥后，用同一个密钥去访问上游。
+    setsid nohup "$PY" "$BRIDGE" "$BPORT" "$BASE_DIR" "$HOST" "$API_KEY" \
       > "$LOG_DIR/bridge.log" 2>&1 < /dev/null &
     disown
     sleep 2
@@ -178,10 +211,13 @@ do_start() {
   # --- ③ 端到端校验 ---
   echo
   echo "═══ ③ 端到端校验（经代理调 Anthropic 接口）═══"
+  local -a AUTH=()
+  [ -n "$API_KEY" ] && AUTH=(-H "x-api-key: $API_KEY")
   local resp
   resp=$(timeout 180 curl -s "http://127.0.0.1:$BPORT/v1/messages" \
     -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' \
-    -d '{"model":"bonsai","max_tokens":32,
+    ${AUTH[@]+"${AUTH[@]}"} \
+    -d '{"model":"bonsai","max_tokens":512,
          "messages":[{"role":"user","content":"Reply with exactly: OK"}]}' 2>/dev/null)
 
   if echo "$resp" | grep -q '"type"'; then
@@ -191,7 +227,12 @@ try:
     d=json.load(sys.stdin)
     print(''.join(c.get('text','') for c in d.get('content',[]) if c.get('type')=='text'))
 except Exception: print('(解析失败)')" 2>/dev/null)
-    c_ok "接口正常，模型回复: ${txt:-<空>}"
+    if [ -n "$txt" ]; then
+      c_ok "接口正常，模型回复: $txt"
+    else
+      c_warn "接口通了但没返回正文（推理模型的思考吃掉了输出预算）"
+      c_info "调大 max_tokens 或降低 reasoning_effort 再试；接口本身是正常的"
+    fi
   else
     c_bad "校验失败，返回："
     echo "$resp" | head -c 400; echo
@@ -204,11 +245,53 @@ except Exception: print('(解析失败)')" 2>/dev/null)
   echo "═══════════════════════════════"
   c_ok "全部就绪"
   echo "═══════════════════════════════"
-  echo "  llama-server : http://127.0.0.1:$PORT"
-  echo "  桥接代理     : http://127.0.0.1:$BPORT"
+  local lanip; lanip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  echo "  监听地址   : $HOST  (llama-server :$PORT / 桥接 :$BPORT)"
+  if [ -n "$lanip" ]; then
+    echo
+    echo "  ── 本机使用 ──"
+    echo "    claude --settings $SETTINGS"
+    echo
+    echo "  ── 内网其他机器使用 ──"
+    echo "    本机 IP  : $lanip"
+    echo "    Claude Code 环境变量："
+    echo "      ANTHROPIC_BASE_URL=http://$lanip:$BPORT"
+    echo "      ANTHROPIC_API_KEY=${API_KEY:-local-bonsai}"
+    echo "      ANTHROPIC_MODEL=bonsai"
+    echo "      CLAUDE_CODE_MAX_CONTEXT_TOKENS=$CTX"
+    echo "    或直接用 curl 自测："
+    printf '      curl http://%s:%s/v1/messages \\\n' "$lanip" "$BPORT"
+    echo "        -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \\"
+    [ -n "$API_KEY" ] && echo "        -H 'x-api-key: $API_KEY' \\"
+    echo "        -d '{\"model\":\"bonsai\",\"max_tokens\":64,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
+  fi
+  # 常见坑：设了 API_KEY，但本机 Claude Code 的 settings 还是老 key → 自己反而连不上
+  if [ -n "$API_KEY" ] && [ -f "$SETTINGS" ]; then
+    local cur; cur=$(grep -oP '"ANTHROPIC_API_KEY"\s*:\s*"\K[^"]*' "$SETTINGS" 2>/dev/null)
+    if [ -n "$cur" ] && [ "$cur" != "$API_KEY" ]; then
+      c_warn "settings 里的 ANTHROPIC_API_KEY (\"$cur\") 与本次 API_KEY 不一致"
+      c_info "改这里，否则本机 Claude Code 会 401：$SETTINGS"
+    fi
+  fi
+
   echo
-  echo "  接入 Claude Code："
-  echo "    claude --settings $SETTINGS"
+  if [ -n "$API_KEY" ]; then
+    c_ok "已启用 API 密钥鉴权（调用方必须带 x-api-key 或 Authorization: Bearer）"
+    c_info "密钥已存到 $KEYFILE（下次不带 API_KEY 重启会自动沿用）"
+    c_info "想改成不鉴权：rm $KEYFILE 后重启"
+  else
+    c_warn "未设 API_KEY —— 能连到本机 $BPORT 端口的人都能免费用模型！"
+    c_info "建议重启时带上密钥：API_KEY=\$(openssl rand -hex 16) $0 restart"
+  fi
+  # 如果对外监听，顺手看一眼防火墙
+  if [ "$HOST" = "0.0.0.0" ] && command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | grep -q "^Status: active"; then
+      local lan; lan=$(hostname -I 2>/dev/null | awk '{print $1}')
+      local net="${lan%.*}.0/24"
+      c_info "检测到 ufw 已启用，如需内网访问请放行："
+      echo "      ufw allow from $net to any port $BPORT proto tcp"
+    fi
+  fi
   echo
   echo "  停止：$0 stop      状态：$0 status"
   echo "  日志：$LOG_DIR/"

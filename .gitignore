@@ -1,6 +1,8 @@
 # 大文件 / 编译产物 —— 绝不入库
-llama.cpp/
-models/
+# 注意用 /xxx 而不是 xxx/ ：后者匹配不到「指向目录的软链接」，
+# 有些人习惯把 llama.cpp / models 软链到仓库外，加斜杠会漏掉它们。
+/llama.cpp
+/models
 *.gguf
 *.q27
 
@@ -10,6 +12,9 @@ reqdump/
 *.log
 __pycache__/
 *.pyc
+
+# 本机 API 密钥 —— 绝不入库
+.bonsai-api-key
 
 # 编辑器
 .vscode/

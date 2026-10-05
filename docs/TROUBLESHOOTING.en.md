@@ -17,6 +17,9 @@
 | **Empty output / thinking but no conclusion** | A reasoning model's thinking consumed the output budget | `-n 16384` or more; `--reasoning-effort medium` |
 | `System message must be at the beginning` | Claude Code connected directly to 8080 | `ANTHROPIC_BASE_URL` must point at the bridge, **8081** |
 | `[claude-code:unrecognized_model]` | It doesn't recognize the name `bonsai` | **Informational only; harmless** |
+| **`401 authentication_error`** | Server has `API_KEY` set; caller sent none or the wrong one | Client adds `-H 'x-api-key: <key>'`; locally, also sync `ANTHROPIC_API_KEY` in `claude-settings-bonsai.json` |
+| **Other machines can't connect, localhost is fine** | Still bound to `127.0.0.1`, or a firewall is blocking | `HOST=0.0.0.0 ./scripts/start-bonsai.sh restart`; `ss -ltn \| grep 8081` should show `0.0.0.0:8081`; `ufw allow from <subnet>.0/24 to any port 8081 proto tcp` |
+| `/v1/models` from another machine returns **502** | The bridge didn't carry a key upstream (old bug) | Use the current version: it now injects the key. If it still fails, read `logs/bridge.log` |
 | GPU reports `illegal memory access` (Xid 13/43) | Running a **non-Bonsai** MoE on the PrismML fork | That fork is Bonsai-specific; use upstream llama.cpp for other models |
 | Answers get shorter late in a long session | `MAX_OUTPUT_TOKENS` is squeezing the prompt budget | Lower it, or raise the server's `-c` (keep `n_ctx = prompt + output`) |
 

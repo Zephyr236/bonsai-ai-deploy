@@ -70,6 +70,42 @@
 
 ---
 
+## 内网共享（让其他机器也能用）
+
+服务默认监听 `0.0.0.0`，同网段的机器可以直接调用。
+
+```bash
+# ── 服务端（装了显卡的那台）──
+API_KEY=$(openssl rand -hex 16) ./scripts/start-bonsai.sh restart
+
+# ── 客户端（另一台机器）──
+export ANTHROPIC_BASE_URL=http://192.168.1.159:8081   # 换成服务端 IP
+export ANTHROPIC_API_KEY=<上面那个密钥>
+export ANTHROPIC_MODEL=bonsai
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS=102400
+claude
+```
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `HOST` | `0.0.0.0` | 监听地址。改成 `127.0.0.1` 则只允许本机 |
+| `PORT` / `BPORT` | `8080` / `8081` | llama-server 直连端口 / 桥接端口 |
+| `API_KEY` | 空 | **留空 = 不鉴权**。内网暴露时强烈建议设置 |
+
+> ⚠️ **`API_KEY` 留空时，任何能连到 8081 端口的人都能免费用你的显卡。**
+> 内网里也可能有访客设备，建议始终设一个。
+>
+> 桥接代理是**唯一的鉴权边界**：它校验客户端密钥后，再用同一个密钥去访问上游
+> llama-server。所以两端填同一个值即可，客户端不需要知道别的。
+>
+> 设过一次 `API_KEY` 后，脚本会把它存进 `.bonsai-api-key`（已 gitignore，权限 600），
+> 以后重启不带 `API_KEY` 也会自动沿用 —— 免得「重启一次就把端口重新敞开」。
+> 想改回不鉴权：`rm .bonsai-api-key` 再重启。
+>
+> 放行防火墙：`ufw allow from 192.168.1.0/24 to any port 8081 proto tcp`
+
+---
+
 ## 三个容易踩的坑
 
 ### 1. "T3 slim" 不能用 llama.cpp

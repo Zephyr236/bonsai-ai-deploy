@@ -69,6 +69,43 @@ Follow AI-DEPLOY.md in https://github.com/Zephyr236/bonsai-ai-deploy to deploy B
 
 ---
 
+## Sharing on your LAN (letting other machines use it)
+
+The server listens on `0.0.0.0` by default, so any machine on the same subnet can call it.
+
+```bash
+# ── Server (the machine with the GPU) ──
+API_KEY=$(openssl rand -hex 16) ./scripts/start-bonsai.sh restart
+
+# ── Client (any other machine) ──
+export ANTHROPIC_BASE_URL=http://192.168.1.159:8081   # the server's IP
+export ANTHROPIC_API_KEY=<the key from above>
+export ANTHROPIC_MODEL=bonsai
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS=102400
+claude
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `HOST` | `0.0.0.0` | Bind address. Set to `127.0.0.1` to allow this machine only |
+| `PORT` / `BPORT` | `8080` / `8081` | llama-server port / bridge port |
+| `API_KEY` | empty | **Empty = no auth.** Set one whenever you're reachable from a network |
+
+> ⚠️ **With `API_KEY` empty, anyone who can reach port 8081 can use your GPU for free.**
+> LANs have guest devices on them. Set a key.
+>
+> The bridge is the **single auth boundary**: it validates the client's key, then uses the
+> same key to reach the upstream llama-server. Both sides use one value; clients need to
+> know nothing else.
+>
+> Once you set `API_KEY`, the script stores it in `.bonsai-api-key` (gitignored, mode 600)
+> and reuses it on later restarts even if you don't pass it — so a restart can't silently
+> reopen a port you'd secured. Back to no auth: `rm .bonsai-api-key` and restart.
+>
+> Open the firewall: `ufw allow from 192.168.1.0/24 to any port 8081 proto tcp`
+
+---
+
 ## Three pitfalls to know before you start
 
 ### 1. "T3 slim" does not work with llama.cpp

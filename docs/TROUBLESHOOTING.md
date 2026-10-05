@@ -18,6 +18,10 @@
 | **输出为空 / 只有思考没有结论** | 推理模型思考吃掉了输出预算 | `-n 16384` 起步；`--reasoning-effort medium` |
 | `System message must be at the beginning` | Claude Code 直连了 8080 | `ANTHROPIC_BASE_URL` 必须指向桥接 **8081** |
 | `[claude-code:unrecognized_model]` | 它不认识 `bonsai` 这个模型名 | **仅提示，不影响使用** |
+| **`401 authentication_error`** | 服务端设了 `API_KEY`，调用方没带或带错 | 客户端加 `-H 'x-api-key: <密钥>'`；本机还要同步 `claude-settings-bonsai.json` 里的 `ANTHROPIC_API_KEY` |
+| **别的机器连不上，本机却正常** | 监听的还是 `127.0.0.1`，或防火墙拦截 | `HOST=0.0.0.0 ./scripts/start-bonsai.sh restart`；`ss -ltn \| grep 8081` 应是 `0.0.0.0:8081`；`ufw allow from <网段>.0/24 to any port 8081 proto tcp` |
+| 从别的机器调 `/v1/models` 返回 **502** | 桥接没带密钥去访问上游（旧版 bug） | 用当前版本：桥接现在会自动注入密钥。仍报错就看 `logs/bridge.log` |
+| 别的机器报 `System message must be at the beginning` | 它连了 8080 而不是 8081 | `ANTHROPIC_BASE_URL` 用桥接端口 **8081** |
 | GPU 报 `illegal memory access` (Xid 13/43) | 用 PrismML fork 跑**非 Bonsai** 的 MoE 模型 | 该 fork 仅为 Bonsai 定制，别的模型要换上游 llama.cpp |
 | 长会话末尾回答变短 | `MAX_OUTPUT_TOKENS` 挤占了 prompt 预算 | 调小它，或调大服务端 `-c`（两者保持 `n_ctx = prompt + output`） |
 

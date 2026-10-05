@@ -338,6 +338,8 @@ common_fit_params: failed to fit params to free device memory: n_gpu_layers alre
 ```bash
 CTX=65536 ./scripts/start-bonsai.sh restart        # 换上下文
 PORT=9090 BPORT=9091 ./scripts/start-bonsai.sh restart
+HOST=127.0.0.1 ./scripts/start-bonsai.sh restart   # 只允许本机访问
+API_KEY=$(openssl rand -hex 16) ./scripts/start-bonsai.sh restart   # 开鉴权
 ```
 
 ### 7.1 ⚠️ 关于 `--parallel 1`（脚本已带，但要知道为什么）
@@ -370,6 +372,46 @@ PORT=9090 BPORT=9091 ./scripts/start-bonsai.sh restart
 **快速参考**：8GB 卡全 GPU 上限 **102400**（实测，106496 OOM）；
 要更长就用 `-nkvo`（KV 放内存），**直接开满 262144**（128K 与 262K 速度相同）。
 
+### 7.3 内网共享：让其他机器调用
+
+脚本默认 `HOST=0.0.0.0`，**同网段机器可直接调用**。
+**先问用户是否需要内网共享**：需要就**务必同时设 `API_KEY`**。
+
+```bash
+# 服务端
+API_KEY=$(openssl rand -hex 16) ./scripts/start-bonsai.sh restart
+# 记下输出里的「本机 IP」，把它给客户端
+```
+
+```bash
+# 客户端（另一台机器）
+export ANTHROPIC_BASE_URL=http://<服务端IP>:8081    # ⚠️ 用 IP，不是 127.0.0.1
+export ANTHROPIC_API_KEY=<同一个密钥>
+export ANTHROPIC_MODEL=bonsai
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS=<服务端 -c>
+claude
+```
+
+**要点**：
+
+| 事项 | 说明 |
+|---|---|
+| 客户端连**桥接端口 8081** | 不要连 8080，否则 `System message must be at the beginning` |
+| 桥接是**唯一鉴权边界** | 它校验客户端密钥，再用同一密钥访问上游；两端同值即可 |
+| 客户端带 `x-api-key` 或 `Authorization: Bearer` 都行 | 两种都认 |
+| `/health` **不需要密钥** | 便于健康检查；`/v1/*`、`/props` 等需要 |
+| 上游 llama-server 也带 `--api-key` | 脚本自动加的，绕过桥接直连 8080 同样需要密钥 |
+| 防火墙 | `ufw allow from <网段>.0/24 to any port 8081 proto tcp` |
+| 只给本机用 | `HOST=127.0.0.1 ./scripts/start-bonsai.sh restart` |
+| 密钥会被记住 | 存到 `.bonsai-api-key`（gitignore、600），重启不传也沿用；`rm` 它可改回不鉴权 |
+
+> ⚠️ **`API_KEY` 留空 = 不鉴权**：任何能连到 8081 的人都能免费用这块显卡。
+> 内网也可能有访客设备。**要开内网就设密钥**，两件事要么都做、要么都不做。
+
+> ⚠️ **改 `API_KEY` 后要同步本机 settings**：`scripts/claude-settings-bonsai.json`
+> 里的 `ANTHROPIC_API_KEY` 若与新的不一致，本机 Claude Code 会 401。
+> （`start-bonsai.sh` 会在不一致时提示。）
+
 ---
 
 ## 8. 接入 Claude Code
@@ -400,8 +442,12 @@ claude --settings <仓库>/scripts/claude-settings-bonsai.json
 - `ANTHROPIC_BASE_URL` 指向**桥接端口 8081**（⚠️ 不是 8080）
 - `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 与服务端 `-c` 一致
 - `CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384` —— 默认 32000 会挤占 prompt 预算
+- `ANTHROPIC_API_KEY` —— **服务端设了 `API_KEY` 就必须和它一致**，否则 401
 
 **算式**：`可用 prompt 预算 = n_ctx − MAX_OUTPUT_TOKENS = 102400 − 16384 = 86016`
+
+> **内网其他机器**：不要用这个 settings 文件（里面写的是 `127.0.0.1`），
+> 改用环境变量把地址换成本机 IP，见 §7.3。
 
 ### 8.3 验证
 
@@ -425,6 +471,10 @@ claude --settings ... -p "只回复两个字：正常"
 | `System message must be at the beginning` | 直连 8080 | `ANTHROPIC_BASE_URL` 改 **8081** |
 | `[claude-code:unrecognized_model]` | 它不认识模型名 | **仅提示，不影响** |
 | GPU 报 `illegal memory access` | 用 PrismML fork 跑**非 Bonsai** 的 MoE | 该 fork 只为 Bonsai 定制，换模型要换引擎 |
+| `401 authentication_error` | 服务端设了 `API_KEY`，调用方没带或带错 | 客户端加 `x-api-key`；本机还要同步 settings 里的 `ANTHROPIC_API_KEY` |
+| 别的机器连不上（本机却正常） | 监听在 `127.0.0.1` / 防火墙拦截 | 用 `HOST=0.0.0.0` 重启；`ss -ltn \| grep 8081` 看是不是 `0.0.0.0`；放行 ufw |
+| 从别的机器调 `/v1/models` 返回 502 | 桥接没带密钥去访问上游 | 已修：现在桥接自动注入密钥。若仍 502 看 `logs/bridge.log` |
+| 客户端报 `System message must be at the beginning` | 连了 8080 而不是 8081 | 改用桥接端口 |
 
 ### ⚠️ 操作安全
 
@@ -452,6 +502,8 @@ kill $(nvidia-smi --query-compute-apps=pid --format=csv,noheader)
 - [ ] `curl http://127.0.0.1:8080/health` 返回 `{"status":"ok"}`
 - [ ] 桥接 8081 的 `/v1/messages` 返回正常 JSON
 - [ ] `claude --settings ... -p "hi"` 有正常回复
+- [ ] **（要内网共享时）** `ss -ltn | grep 8081` 显示 `0.0.0.0:8081`，且已设 `API_KEY`
+- [ ] **（要内网共享时）** 从另一台机器用 `curl http://<本机IP>:8081/v1/messages` 能拿到回复
 
 ---
 
@@ -459,6 +511,8 @@ kill $(nvidia-smi --query-compute-apps=pid --format=csv,noheader)
 
 1. **启动/停止**：`./scripts/start-bonsai.sh start|stop|status`
 2. **接入 Claude Code**：`claude --settings <仓库>/scripts/claude-settings-bonsai.json`
+2.1 **内网共享**：默认已监听 `0.0.0.0`，把 `http://<本机IP>:8081` 和 `API_KEY` 给客户端即可。
+   **提醒用户**：不设 `API_KEY` 时同网段任何人都能免费用这块显卡
 3. **性能预期**（RTX 3070 8GB 实测）：
    - 4K 上下文约 **51 t/s**，100K 约 **39 t/s**
    - 预填充约 888 t/s

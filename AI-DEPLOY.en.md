@@ -346,6 +346,8 @@ end-to-end verification.
 ```bash
 CTX=65536 ./scripts/start-bonsai.sh restart        # different context
 PORT=9090 BPORT=9091 ./scripts/start-bonsai.sh restart
+HOST=127.0.0.1 ./scripts/start-bonsai.sh restart   # this machine only
+API_KEY=$(openssl rand -hex 16) ./scripts/start-bonsai.sh restart   # turn auth on
 ```
 
 ### 7.1 ⚠️ About `--parallel 1` (already in the script, but you should know why)
@@ -383,6 +385,46 @@ and choose parameters based on the user's **VRAM / RAM / CPU / use case**. Key p
 **Quick reference**: on an 8 GB card the full-GPU ceiling is **102400** (measured; 106496 OOMs).
 For longer, use `-nkvo` (KV in system RAM) and **go straight to 262144** (128K and 262K run at the same speed).
 
+### 7.3 Sharing on the LAN
+
+The script defaults to `HOST=0.0.0.0`, so **machines on the same subnet can call it directly**.
+**Ask the user whether they want LAN sharing**; if they do, **set `API_KEY` at the same time**.
+
+```bash
+# Server
+API_KEY=$(openssl rand -hex 16) ./scripts/start-bonsai.sh restart
+# Note the "本机 IP" (LAN IP) it prints and give it to the client
+```
+
+```bash
+# Client (any other machine)
+export ANTHROPIC_BASE_URL=http://<server-ip>:8081    # ⚠️ the IP, not 127.0.0.1
+export ANTHROPIC_API_KEY=<the same key>
+export ANTHROPIC_MODEL=bonsai
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS=<the server's -c>
+claude
+```
+
+**Key points**:
+
+| Item | Note |
+|---|---|
+| Clients connect to **bridge port 8081** | Not 8080, or you get `System message must be at the beginning` |
+| The bridge is the **single auth boundary** | It validates the client's key, then reaches upstream with the same key |
+| Clients may send `x-api-key` or `Authorization: Bearer` | Both accepted |
+| `/health` **needs no key** | Keeps health checks simple; `/v1/*` and `/props` do need one |
+| The upstream llama-server also gets `--api-key` | The script adds it, so hitting 8080 directly needs the key too |
+| Firewall | `ufw allow from <subnet>.0/24 to any port 8081 proto tcp` |
+| This machine only | `HOST=127.0.0.1 ./scripts/start-bonsai.sh restart` |
+| The key is remembered | Saved to `.bonsai-api-key` (gitignored, 600) and reused on restart; `rm` it to go back to no auth |
+
+> ⚠️ **Empty `API_KEY` = no auth**: anyone who can reach port 8081 can use this GPU for free.
+> LANs have guest devices on them. **If you open it to the LAN, set a key** — do both or neither.
+
+> ⚠️ **After changing `API_KEY`, update the local settings file**: if `ANTHROPIC_API_KEY` in
+> `scripts/claude-settings-bonsai.json` doesn't match, this machine's own Claude Code gets a 401.
+> (`start-bonsai.sh` warns when they disagree.)
+
 ---
 
 ## 8. Wire up Claude Code
@@ -414,8 +456,12 @@ claude --settings <repo>/scripts/claude-settings-bonsai.json
 - `ANTHROPIC_BASE_URL` points at the **bridge port 8081** (⚠️ not 8080)
 - `CLAUDE_CODE_MAX_CONTEXT_TOKENS` must match the server's `-c`
 - `CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384` — the default 32000 squeezes the prompt budget
+- `ANTHROPIC_API_KEY` — **must match the server's `API_KEY` whenever one is set**, or you get a 401
 
 **Formula**: `usable prompt budget = n_ctx − MAX_OUTPUT_TOKENS = 102400 − 16384 = 86016`
+
+> **Other machines on the LAN**: don't use this settings file (it says `127.0.0.1`).
+> Override the address with environment variables — see §7.3.
 
 ### 8.3 Verify
 
@@ -439,6 +485,10 @@ claude --settings ... -p "Reply with exactly: OK"
 | `System message must be at the beginning` | Connected directly to 8080 | Point `ANTHROPIC_BASE_URL` at **8081** |
 | `[claude-code:unrecognized_model]` | It doesn't know the model name | **Informational only; harmless** |
 | GPU reports `illegal memory access` | Running a **non-Bonsai** MoE on the PrismML fork | That fork is Bonsai-specific; use another engine for other models |
+| `401 authentication_error` | Server has `API_KEY` set; caller sent none or the wrong one | Client adds `x-api-key`; locally, also sync `ANTHROPIC_API_KEY` in settings |
+| Other machines can't connect (localhost is fine) | Bound to `127.0.0.1`, or a firewall is blocking | Restart with `HOST=0.0.0.0`; check `ss -ltn \| grep 8081` shows `0.0.0.0`; open ufw |
+| `/v1/models` from another machine returns 502 | The bridge didn't send a key upstream | Fixed: the bridge now injects it. If still 502, read `logs/bridge.log` |
+| Client reports `System message must be at the beginning` | It connected to 8080 instead of 8081 | Use the bridge port |
 
 ### ⚠️ Operational safety
 
@@ -466,6 +516,8 @@ All boxes ticked = deployment succeeded:
 - [ ] `curl http://127.0.0.1:8080/health` returns `{"status":"ok"}`
 - [ ] The bridge on 8081 returns valid JSON from `/v1/messages`
 - [ ] `claude --settings ... -p "hi"` gets a normal reply
+- [ ] **(if sharing on the LAN)** `ss -ltn | grep 8081` shows `0.0.0.0:8081`, and `API_KEY` is set
+- [ ] **(if sharing on the LAN)** `curl http://<server-ip>:8081/v1/messages` from another machine answers
 
 ---
 
@@ -473,6 +525,8 @@ All boxes ticked = deployment succeeded:
 
 1. **Start/stop**: `./scripts/start-bonsai.sh start|stop|status`
 2. **Claude Code**: `claude --settings <repo>/scripts/claude-settings-bonsai.json`
+2.1 **LAN sharing**: it already listens on `0.0.0.0`; hand clients `http://<server-ip>:8081`
+   plus the `API_KEY`. **Warn them**: with no `API_KEY`, anyone on the subnet can use this GPU for free
 3. **Expected performance** (measured on RTX 3070 8 GB):
    - ~**51 tok/s** at 4K context, ~**39 tok/s** at 100K
    - Prefill ~888 tok/s
