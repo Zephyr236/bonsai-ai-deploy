@@ -344,16 +344,28 @@ PORT=9090 BPORT=9091 ./scripts/start-bonsai.sh restart
 
 > 这也是「`llama-cli` 能吃 100K 而 `llama-server` 不行」的原因 —— server 多了 slot 开销。
 
-### 7.2 根据显存调整上下文
+### 7.2 ⚠️ 参数必须按用户机器调整 —— 见 [`docs/PARAM-TUNING.md`](docs/PARAM-TUNING.md)
 
-| 显存 | 建议 `-c` | 说明 |
-|---|---|---|
-| 8 GB | **102400** | 实测上限（106496 会 OOM） |
-| 12 GB | 131072 | |
-| 16 GB+ | 262144 | 模型原生上限 |
+**不要照抄默认值**。启动前先读 [`docs/PARAM-TUNING.md`](docs/PARAM-TUNING.md)，
+按用户的**显存 / 内存 / CPU / 用途**决定参数。要点：
 
-**要超过全 GPU 上限时**（如 8GB 卡跑 128K）：加 `-nkvo` 把 KV 放系统内存。
-代价是从 ~39 t/s 降到 ~11 t/s。**要用就开满 262K**（128K 和 262K 速度一样，瓶颈在 PCIe）。
+| 要让 AI 做的 | 去哪 |
+|---|---|
+| 从 `nvidia-smi` / `free` / `nproc` 读出真实资源 | PARAM-TUNING §1 |
+| 用 KV 公式估上下文上限 | PARAM-TUNING §2 |
+| **实测**逼近真实上限（不靠公式） | PARAM-TUNING §6.1 |
+| 按显存/内存/用途选配置档 | PARAM-TUNING §5、§7 |
+| 测速度随上下文的衰减并告知用户 | PARAM-TUNING §6.2 |
+| 知道哪些参数"调了也没用" | PARAM-TUNING §6.3 |
+
+**三条硬约束**（违反必出问题）：
+
+1. **`-ctk` 与 `-ctv` 必须完全相同** —— 混用会让速度从 51.7 掉到 40.9 t/s、预填充从 888 掉到 303
+2. **`-c` > 32768 时必须 `--parallel 1`** —— 否则 `failed to allocate buffer for rs cache`
+3. **`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 必须等于服务端 `-c`**
+
+**快速参考**：8GB 卡全 GPU 上限 **102400**（实测，106496 OOM）；
+要更长就用 `-nkvo`（KV 放内存），**直接开满 262144**（128K 与 262K 速度相同）。
 
 ---
 

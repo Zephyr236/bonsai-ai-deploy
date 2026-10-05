@@ -23,6 +23,9 @@ Qwen3.8-27B 的权重全部三元化（−1 / 0 / +1）后 **只有 5.95 GB**，
 按 https://github.com/<你的用户名>/bonsai-deploy 里的 AI-DEPLOY.md 部署 Bonsai-2-27B
 ```
 
+> 部署过程中 AI 会读取 `docs/PARAM-TUNING.md`，**根据你机器的显存/内存/CPU 和用途**
+> 调整上下文长度、KV 量化、并行槽位等参数，而不是套用固定默认值。
+
 ---
 
 ## 仓库内容
@@ -33,6 +36,7 @@ Qwen3.8-27B 的权重全部三元化（−1 / 0 / +1）后 **只有 5.95 GB**，
 | `scripts/start-bonsai.sh` | 一键启动 / 停止 / 状态。**相对路径**，整个目录可任意移动 |
 | `scripts/anthropic-bridge.py` | Anthropic API 桥接代理（**接入 Claude Code 必需**，见下） |
 | `scripts/claude-settings-bonsai.json` | Claude Code 配置 |
+| **`docs/PARAM-TUNING.md`** | ⭐ **参数调优**：按显存/内存/CPU/用途调整 llama.cpp 参数，含 KV 显存公式、实测上限逼近法、速度-上下文曲线 |
 | `docs/TROUBLESHOOTING.md` | 故障速查（也可直接看 AI-DEPLOY.md §9） |
 
 > **本仓库不含**模型权重（5.95GB）与 llama.cpp 编译产物 —— 二者超出 GitHub 体积限制，
