@@ -1,0 +1,18 @@
+# 大文件 / 编译产物 —— 绝不入库
+llama.cpp/
+models/
+*.gguf
+*.q27
+
+# 运行时
+logs/
+reqdump/
+*.log
+__pycache__/
+*.pyc
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
