@@ -1,7 +1,6 @@
-# Saikei（栽景）· Bonsai-2-27B 本地部署套件
+# bonsai-ai-deploy
 
-> **栽景**（さいけい）是盆栽术语：*在浅盘中造出一片微缩山水*。
-> 这个项目做的事正是如此 —— **把完整的 27B 模型装进一张消费级显卡**。
+> **用 AI 部署 Bonsai-2-27B** —— 把一根提示词交给 AI，它自己装驱动、编 CUDA、下模型。
 
 **在单张显卡上部署 [Bonsai-2-27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf)（三元量化 27B），并接入 Claude Code。**
 
@@ -22,7 +21,7 @@
 或者直接说：
 
 ```
-按 https://github.com/<你的用户名>/bonsai-saikei 里的 AI-DEPLOY.md 部署 Bonsai-2-27B
+按 https://github.com/<你的用户名>/bonsai-ai-deploy 里的 AI-DEPLOY.md 部署 Bonsai-2-27B
 ```
 
 > 部署时 AI 会读 [`docs/PARAM-TUNING.md`](docs/PARAM-TUNING.md)，

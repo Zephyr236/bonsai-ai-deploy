@@ -1,4 +1,4 @@
-# Saikei · 部署指令（供 AI agent 执行）
+# bonsai-ai-deploy · 部署指令（供 AI agent 执行）
 
 > **你是一个 AI 编码助手，用户让你在这台机器上部署 Bonsai-2-27B 并接入 Claude Code。**
 >
