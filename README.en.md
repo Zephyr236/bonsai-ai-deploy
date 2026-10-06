@@ -121,14 +121,23 @@ matches nothing.
 **Both mechanisms fail at once: the context fills, nothing compacts, nothing retries,
 and you get a hard error.**
 
-One look at `/context` shows it (same model, only this one variable differs):
+Measured A/B (identical prompts, only this one variable differs, watching `compact_boundary`):
 
-| | Free space | Autocompact buffer |
-|---|---|---|
-| with the variable | 88.8k (86.7%) | **no such row** |
-| **without it (correct)** | 59.4k (58.0%) | **29.4k (28.7%)** |
+| turn | 1 | 2 | 3 | 4 | 5–7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|
+| **with** the variable | – | – | – | – | – | starts compacting only after hitting the wall | **compacted 113500 → 28319** |
+| **without** it (correct) | – | – | **compacted 53054 → 15153** | – | – | – | – |
 
-If an `Autocompact buffer` row is present, proactive compaction is armed.
+So the precise statement is not "it never compacts":
+
+- **without** the variable → proactive compaction fires at ~53k and **the wall is never reached**
+- **with** it → nothing compacts even at 99,904 tokens; it recovers only after a request is
+  actually rejected — and that recovery still requires the error wording to be recognized
+  (i.e. it depends on the bridge rewrite below)
+
+**How to check** (one command, no need to fill the context): `claude --settings ... -p "/context"`
+— an `Autocompact buffer` row means proactive compaction is on. That row disappears when the
+variable is set.
 
 > `scripts/anthropic-bridge.py` adds a second layer of safety: it **rewrites**
 > llama.cpp's overflow error into Anthropic's
