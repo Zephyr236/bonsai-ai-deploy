@@ -22,6 +22,10 @@
 | `/v1/models` from another machine returns **502** | The bridge didn't carry a key upstream (old bug) | Use the current version: it now injects the key. If it still fails, read `logs/bridge.log` |
 | GPU reports `illegal memory access` (Xid 13/43) | Running a **non-Bonsai** MoE on the PrismML fork | That fork is Bonsai-specific; use upstream llama.cpp for other models |
 | Answers get shorter late in a long session | `MAX_OUTPUT_TOKENS` is squeezing the prompt budget | Lower it, or raise the server's `-c` (keep `n_ctx = prompt + output`) |
+| **Context fills up, no auto-compact, hard overflow error** | `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` is set: for an unrecognized model ID it **skips proactive compaction** and waits for the API to reject; but Claude Code only recognizes `prompt is too long` while llama.cpp says `exceeds the available context size`, so recovery never fires | **Delete that variable** and restart claude |
+| Unsure whether proactive compaction is armed | — | `claude --settings ... -p "/context"` must show an `Autocompact buffer` row; no row means it's off |
+| You see `prompt is too long: N tokens > M maximum` | The bridge rewrote llama.cpp's error into wording Claude Code recognizes | **Normal** — the reactive recovery path is working; it compacts and retries |
+| A request is rejected while `/context` shows plenty of room | The window constrains `input + max_tokens`, not input alone | Lower `CLAUDE_CODE_MAX_OUTPUT_TOKENS` |
 
 ## Output that is NOT an error (don't misdiagnose)
 

@@ -444,6 +444,14 @@ claude --settings <仓库>/scripts/claude-settings-bonsai.json
 - `CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384` —— 默认 32000 会挤占 prompt 预算
 - `ANTHROPIC_API_KEY` —— **服务端设了 `API_KEY` 就必须和它一致**，否则 401
 
+> ⚠️⚠️ **绝对不要加 `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1`。**
+> 它会让 `bonsai` 这种「Claude Code 不认识的模型 id」**跳过主动自动压缩**，
+> 改为只等 API 报错后再补救；而 Claude Code 只认 Anthropic 的
+> `prompt is too long`，llama.cpp 说的是 `exceeds the available context size`，
+> 于是补救也不会发生 —— 上下文满了直接报错。
+> **验证方法**：`claude --settings ... -p "/context"`，输出里必须有一行
+> `Autocompact buffer`；没有就说明主动压缩被关掉了。
+
 **算式**：`可用 prompt 预算 = n_ctx − MAX_OUTPUT_TOKENS = 102400 − 16384 = 86016`
 
 > **内网其他机器**：不要用这个 settings 文件（里面写的是 `127.0.0.1`），
@@ -475,6 +483,9 @@ claude --settings ... -p "只回复两个字：正常"
 | 别的机器连不上（本机却正常） | 监听在 `127.0.0.1` / 防火墙拦截 | 用 `HOST=0.0.0.0` 重启；`ss -ltn \| grep 8081` 看是不是 `0.0.0.0`；放行 ufw |
 | 从别的机器调 `/v1/models` 返回 502 | 桥接没带密钥去访问上游 | 已修：现在桥接自动注入密钥。若仍 502 看 `logs/bridge.log` |
 | 客户端报 `System message must be at the beginning` | 连了 8080 而不是 8081 | 改用桥接端口 |
+| **上下文满了不自动压缩，直接报超上下文** | 设了 `DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1`，主动压缩被跳过；且 llama.cpp 的错误措辞 Claude Code 不认，被动补救也不触发 | **删掉该变量**。用 `claude --settings ... -p "/context"` 确认出现 `Autocompact buffer` 行 |
+| `prompt is too long: N tokens > M maximum` | 桥接已把 llama.cpp 的错误改写成了 Claude Code 认识的形状（这是**正常**的，说明补救通道可用） | 无需处理；会自动压缩后重试 |
+| 请求被拒但 `/context` 显示还剩很多空间 | `input + max_tokens` 超了窗口，不只是 input | 调小 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`，或调小 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 留出余量 |
 
 ### ⚠️ 操作安全
 

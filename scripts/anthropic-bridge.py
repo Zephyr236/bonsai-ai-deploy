@@ -25,7 +25,10 @@
     ANTHROPIC_BASE_URL=http://<本机IP>:8081
     ANTHROPIC_API_KEY=<API密钥>          # 设置了密钥时必填
 """
-import http.server, urllib.request, urllib.error, json, sys, os
+import http.server, urllib.request, urllib.error, json, sys, os, re
+
+# llama.cpp 超上下文时的措辞（Claude Code 不认识它，见 _translate_upstream_error）
+_TOO_LONG_RE = re.compile(r"exceeds the available context size", re.I)
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
 
@@ -127,6 +130,46 @@ def _upstream_headers(headers):
     if API_KEY:
         out["Authorization"] = f"Bearer {API_KEY}"
     return out
+
+
+def _translate_upstream_error(body: bytes) -> bytes:
+    """把 llama.cpp 的「超出上下文」错误改写成 Anthropic 的形状。
+
+    为什么必须改写：Claude Code 只在错误文本里认出 `prompt is too long`
+    才会走「压缩对话后重试」。llama.cpp 的原话是
+        request (135013 tokens) exceeds the available context size (102400 tokens)
+    它一个关键词都不匹配，于是 Claude Code 既不压缩也不重试，整轮直接失败。
+    （见 claude.exe 里的检测函数： message.includes("prompt is too long")）
+
+    改写后，即便主动压缩没赶上，被动恢复也能生效。
+    """
+    try:
+        j = json.loads(body)
+    except Exception:
+        return body
+    err = j.get("error") if isinstance(j, dict) else None
+    if not isinstance(err, dict):
+        return body
+
+    etype = str(err.get("type", ""))
+    msg = str(err.get("message", ""))
+    if "exceed_context_size_error" not in etype and \
+       not _TOO_LONG_RE.search(msg):
+        return body          # 不是超上下文，原样放行
+
+    # 优先用结构化字段；没有就从 "(135013 tokens) ... (102400 tokens)" 里抠
+    actual, limit = err.get("n_prompt_tokens"), err.get("n_ctx")
+    if actual is None or limit is None:
+        nums = re.findall(r"\((\d+) tokens\)", msg)
+        if len(nums) >= 2:
+            actual, limit = int(nums[0]), int(nums[1])
+
+    # Claude Code 会用这个正则反解出实际/上限 token 数：
+    #   /prompt is too long[^0-9]*(\d+)\s*tokens?\s*>\s*(\d+)/i
+    text = f"prompt is too long: {actual} tokens > {limit} maximum"
+    return json.dumps({"type": "error",
+                       "error": {"type": "invalid_request_error",
+                                 "message": text}}).encode()
 
 
 def _json_error(handler, code, etype, message):
@@ -236,7 +279,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._canon(f"{self.path} -> 200 {r.headers.get('Content-Type','')}",
                         "ok")
         except urllib.error.HTTPError as e:
-            d = e.read()
+            d = _translate_upstream_error(e.read())
             self._canon(f"upstream {e.code}: {d[:300]!r}", "err")
             self._relay(e.code, e.headers.items(), d)
         except Exception as e:

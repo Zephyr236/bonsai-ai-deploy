@@ -106,20 +106,46 @@ claude
 
 ---
 
-## Three pitfalls to know before you start
+## Four pitfalls to know before you start
 
-### 1. "T3 slim" does not work with llama.cpp
+### 1. Never set `DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` — context fills up with no auto-compact
+
+This is the nastiest one, because it **looks** like it's helping.
+
+The variable means: for a model ID Claude Code doesn't recognize (`bonsai` is one),
+**skip proactive auto-compaction** and instead wait for the API to reject a request,
+then recover. But that recovery requires Claude Code to recognize the error text as
+`prompt is too long` — llama.cpp says `exceeds the available context size`, which
+matches nothing.
+
+**Both mechanisms fail at once: the context fills, nothing compacts, nothing retries,
+and you get a hard error.**
+
+One look at `/context` shows it (same model, only this one variable differs):
+
+| | Free space | Autocompact buffer |
+|---|---|---|
+| with the variable | 88.8k (86.7%) | **no such row** |
+| **without it (correct)** | 59.4k (58.0%) | **29.4k (28.7%)** |
+
+If an `Autocompact buffer` row is present, proactive compaction is armed.
+
+> `scripts/anthropic-bridge.py` adds a second layer of safety: it **rewrites**
+> llama.cpp's overflow error into Anthropic's
+> `prompt is too long: N tokens > M maximum`, so the reactive recovery works too.
+
+### 2. "T3 slim" does not work with llama.cpp
 
 If you see `bonsai2-27b-t3-slim.q27` — that is the **q27 engine**'s private format and
 **llama.cpp cannot load it**. The llama.cpp equivalent is **PTQ1_0** (also an official "8 GB card" pack).
 
-### 2. You must use PrismML's fork, and build it from source
+### 3. You must use PrismML's fork, and build it from source
 
 The ternary weights need custom CUDA kernels, which live only in the `prism` branch of
 `PrismML-Eng/llama.cpp`. **The official prebuilt binaries contain only `sm_120a` (RTX 50 series)** —
 RTX 20/30/40 cards must build from source.
 
-### 3. Claude Code needs a bridge proxy
+### 4. Claude Code needs a bridge proxy
 
 llama-server natively supports the Anthropic API, but Claude Code mixes `role: system` messages
 into the `messages` array, while Bonsai's Qwen-family template requires `system` to come first.
@@ -398,6 +424,15 @@ RAM) at ~11 tok/s (128K and 262K run at the same speed — the bottleneck is PCI
 A: Yes, but a **bridge proxy is required** — Claude Code puts `role: system` inside the
 `messages` array, while Bonsai's Qwen-family template rejects that with
 `System message must be at the beginning`.
+
+**Q: Why doesn't it auto-compact near the context limit — I just get a hard overflow error?**
+A: You almost certainly have `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` set.
+For a model ID Claude Code doesn't recognize (`bonsai`) it **skips proactive compaction** and
+waits for the API to reject a request instead — but that recovery only fires on
+`prompt is too long`, while llama.cpp says `exceeds the available context size`. Both
+mechanisms fail together. **Delete that variable**, then confirm with
+`claude --settings ... -p "/context"` that an `Autocompact buffer` row appears.
+See [pitfall 1](#1-never-set-disable_unknown_model_window_enforcement1--context-fills-up-with-no-auto-compact).
 
 **Q: Why do I only get thinking, never an answer?**
 A: This is a reasoning model and **thinking consumes the output budget**. Raise `-n` to

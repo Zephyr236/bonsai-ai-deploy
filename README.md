@@ -106,19 +106,43 @@ claude
 
 ---
 
-## 三个容易踩的坑
+## 四个容易踩的坑
 
-### 1. "T3 slim" 不能用 llama.cpp
+### 1. 别加 `DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` —— 上下文满了不会自动压缩
+
+这是最坑的一个，因为它**看起来**像是在帮忙。
+
+该变量的作用是：对 Claude Code **不认识的模型 id**（`bonsai` 就是），
+**跳过主动自动压缩**，改成「等 API 报错后再补救」。而补救需要 Claude Code
+在错误文本里认出 `prompt is too long` —— llama.cpp 说的是
+`exceeds the available context size`，一个字都不匹配。
+
+**两个机制同时失效，结果就是上下文满了：不压缩、不重试、直接报错。**
+
+对照 `/context` 一眼就能看出来（同一个模型，只差这一个变量）：
+
+| | Free space | Autocompact buffer |
+|---|---|---|
+| 加上这个变量 | 88.8k (86.7%) | **没有这一行** |
+| **不加（正确）** | 59.4k (58.0%) | **29.4k (28.7%)** |
+
+只要出现 `Autocompact buffer` 这一行，就说明主动压缩已经武装好了。
+
+> 本仓库的 `scripts/anthropic-bridge.py` 另做了一层保险：把 llama.cpp 的超上下文
+> 错误**改写**成 Anthropic 的 `prompt is too long: N tokens > M maximum`，
+> 这样即使主动压缩没赶上，被动补救也能生效。
+
+### 2. "T3 slim" 不能用 llama.cpp
 
 如果你看到的是 `bonsai2-27b-t3-slim.q27` —— 那是 **q27 引擎**的私有格式，
 **llama.cpp 无法加载**。llama.cpp 侧要用 **PTQ1_0**（同为官方「8GB 显卡包」）。
 
-### 2. 必须用 PrismML 的 fork，且必须自编译
+### 3. 必须用 PrismML 的 fork，且必须自编译
 
 三元权重需要自定义 CUDA 内核，只在 `PrismML-Eng/llama.cpp` 的 `prism` 分支里。
 **官方预编译二进制只含 `sm_120a`（RTX 50 系）**，20/30/40 系一律要源码编译。
 
-### 3. 接入 Claude Code 需要桥接代理
+### 4. 接入 Claude Code 需要桥接代理
 
 llama-server 原生支持 Anthropic API，但 Claude Code 会把 `role: system` 的消息
 混在 messages 数组里，而 Bonsai 的 Qwen 系模板要求 system 置顶，会直接报错。
@@ -393,6 +417,13 @@ A: 全 GPU 卸载时 8 GB 卡上限 **100K**（102400）。用 `-nkvo` 把 KV �
 **Q: 能接入 Claude Code 吗？**
 A: 可以，但**需要一个桥接代理** —— Claude Code 会把 `role: system` 塞进 `messages` 数组，
 而 Bonsai 的 Qwen 系模板要求 system 置顶，直连会报 `System message must be at the beginning`。
+
+**Q: 上下文快满时为什么不自动压缩，直接就报超上下文？**
+A: 多半是设了 `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1`。它对 Claude Code
+不认识的模型 id（`bonsai`）**跳过主动压缩**，改成等 API 报错后补救；而补救要求认出
+`prompt is too long`，llama.cpp 说的是 `exceeds the available context size`，于是两个机制
+一起失效。**删掉这个变量**，然后用 `claude --settings ... -p "/context"` 确认输出里出现
+`Autocompact buffer` 一行。详见[坑 1](#1-别加-disable_unknown_model_window_enforcement1--上下文满了不会自动压缩)。
 
 **Q: 为什么只输出思考、不给答案？**
 A: 这是推理模型，**思考会消耗输出预算**。把 `-n` 提到 16384 以上，或加 `--reasoning-effort medium`。

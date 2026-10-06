@@ -24,6 +24,10 @@
 | 别的机器报 `System message must be at the beginning` | 它连了 8080 而不是 8081 | `ANTHROPIC_BASE_URL` 用桥接端口 **8081** |
 | GPU 报 `illegal memory access` (Xid 13/43) | 用 PrismML fork 跑**非 Bonsai** 的 MoE 模型 | 该 fork 仅为 Bonsai 定制，别的模型要换上游 llama.cpp |
 | 长会话末尾回答变短 | `MAX_OUTPUT_TOKENS` 挤占了 prompt 预算 | 调小它，或调大服务端 `-c`（两者保持 `n_ctx = prompt + output`） |
+| **上下文满了不自动压缩，直接报超上下文** | 设了 `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1`：它对不认识的模型 id **跳过主动压缩**，只等 API 报错后补救；而 Claude Code 只认 `prompt is too long`，llama.cpp 说的是 `exceeds the available context size`，补救也不触发 | **删掉该变量**，重启 claude |
+| 不确定主动压缩有没有生效 | —— | `claude --settings ... -p "/context"`，输出里**必须有** `Autocompact buffer` 一行；没有就是被关了 |
+| 收到 `prompt is too long: N tokens > M maximum` | 桥接把 llama.cpp 的错误改写成了 Claude Code 认识的措辞 | **正常**，说明被动补救通道可用，会自动压缩重试 |
+| 请求被拒，但 `/context` 显示还剩很多空间 | 窗口约束是 `input + max_tokens`，不是只有 input | 调小 `CLAUDE_CODE_MAX_OUTPUT_TOKENS` |
 
 ## 不是错误的输出（别误判）
 

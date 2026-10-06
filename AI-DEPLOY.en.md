@@ -458,6 +458,14 @@ claude --settings <repo>/scripts/claude-settings-bonsai.json
 - `CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384` — the default 32000 squeezes the prompt budget
 - `ANTHROPIC_API_KEY` — **must match the server's `API_KEY` whenever one is set**, or you get a 401
 
+> ⚠️⚠️ **Never add `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1`.**
+> For a model ID Claude Code doesn't recognize (`bonsai`), it **skips proactive
+> auto-compaction** and waits for the API to reject a request instead. But that recovery
+> only fires if Claude Code recognizes the error as `prompt is too long`, and llama.cpp
+> says `exceeds the available context size` — so nothing recovers and you get a hard error.
+> **How to check**: `claude --settings ... -p "/context"` must show an
+> `Autocompact buffer` row; if it's missing, proactive compaction is off.
+
 **Formula**: `usable prompt budget = n_ctx − MAX_OUTPUT_TOKENS = 102400 − 16384 = 86016`
 
 > **Other machines on the LAN**: don't use this settings file (it says `127.0.0.1`).
@@ -489,6 +497,9 @@ claude --settings ... -p "Reply with exactly: OK"
 | Other machines can't connect (localhost is fine) | Bound to `127.0.0.1`, or a firewall is blocking | Restart with `HOST=0.0.0.0`; check `ss -ltn \| grep 8081` shows `0.0.0.0`; open ufw |
 | `/v1/models` from another machine returns 502 | The bridge didn't send a key upstream | Fixed: the bridge now injects it. If still 502, read `logs/bridge.log` |
 | Client reports `System message must be at the beginning` | It connected to 8080 instead of 8081 | Use the bridge port |
+| **Context fills up, no auto-compact, hard overflow error** | `DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` is set, so proactive compaction is skipped; and llama.cpp's error wording isn't recognized, so reactive recovery never fires either | **Delete that variable.** Confirm with `claude --settings ... -p "/context"` — an `Autocompact buffer` row must appear |
+| `prompt is too long: N tokens > M maximum` | The bridge rewrote llama.cpp's error into the shape Claude Code recognizes (**normal** — the recovery path is working) | Nothing to do; it compacts and retries |
+| A request is rejected while `/context` still shows lots of room | `input + max_tokens` exceeded the window, not input alone | Lower `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, or lower `CLAUDE_CODE_MAX_CONTEXT_TOKENS` for headroom |
 
 ### ⚠️ Operational safety
 
